@@ -1,0 +1,12 @@
+## Interface: 16001
+## Title: Vendor Expand (Forever)
+## Author: Daeler
+## Version: 1.0.0
+## SavedVariables: VendorExpandForeverDB
+## IconTexture: Interface\AddOns\Vendor_Expand_Forever\media\VEF_icon.png
+## Category: Daeler Addons
+## X-Category: Merchant
+## Notes: Adds an arrow to the merchant window to expand it and show many more items per page. One click to expand or restore.
+## Notes-frFR: Ajoute une fleche a la fenetre du marchand pour l'elargir et afficher beaucoup plus d'objets par page. Un clic pour elargir ou revenir a la normale.
+
+Core.lua
