@@ -1,7 +1,7 @@
 ## Interface: 16001
 ## Title: Vendor Expand (Forever)
 ## Author: Daeler
-## Version: 1.0.0
+## Version: 1.0.1
 ## SavedVariables: VendorExpandForeverDB
 ## IconTexture: Interface\AddOns\Vendor_Expand_Forever\media\VEF_icon.png
 ## Category: Daeler Addons

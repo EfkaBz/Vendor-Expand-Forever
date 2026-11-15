@@ -27,7 +27,6 @@ local db
 local origWidth, origHeight
 local origPoints = {}       -- ancrages d'origine des MerchantItem1..12
 local hgap, vgap            -- espacements mesures sur la mise en page Blizzard
-local pinned                -- elements du bas fixes au coin bas-gauche quand elargi
 local page = 1
 local toggleButton, dropButton, dropMenu, nav, backdrop
 local hiddenArt = {}
@@ -159,39 +158,90 @@ local function IsMerchantItem(f)
     return n and n:match("^MerchantItem%d+$")
 end
 
-local function SnapshotChildren()
-    if pinned then return end
-    local left, bottom, height = MerchantFrame:GetLeft(), MerchantFrame:GetBottom(), MerchantFrame:GetHeight()
-    if not left then return end
-    pinned = {}
+-- Fantomes : copie invisible de la fenetre normale (et de ses 12 cases) collee en bas
+-- de la vraie fenetre. Les elements du bas qui s'ancrent sur une case ou sur le haut
+-- de la fenetre sont rebranches sur ces fantomes : ils gardent leur place d'origine,
+-- quel que soit l'ancrage que Blizzard (ou un autre addon) leur redonne ensuite.
+local ghostL, ghostR
+local ghostItems = {}
+local ghostOf, realOf = {}, {}
+
+local function CreateGhosts()
+    ghostL = CreateFrame("Frame", nil, MerchantFrame)
+    ghostL:SetSize(origWidth, origHeight)
+    ghostL:SetPoint("BOTTOMLEFT")
+    ghostR = CreateFrame("Frame", nil, MerchantFrame)
+    ghostR:SetSize(origWidth, origHeight)
+    ghostR:SetPoint("BOTTOMRIGHT")
+    realOf[ghostL], realOf[ghostR] = MerchantFrame, MerchantFrame
+
+    local w, h = MerchantItem1:GetSize()
+    for i = 1, BUYBACK_COUNT do
+        local g = CreateFrame("Frame", nil, MerchantFrame)
+        g:SetSize(w, h)
+        ghostItems[i] = g
+        local item = _G["MerchantItem" .. i]
+        if item then ghostOf[item], realOf[g] = g, item end
+    end
+    for i, pts in pairs(origPoints) do
+        for _, pt in ipairs(pts) do
+            local point, rel, relPoint, x, y = unpack(pt)
+            if rel == MerchantFrame then
+                rel = relPoint:find("RIGHT") and ghostR or ghostL
+            else
+                rel = ghostOf[rel] or rel
+            end
+            ghostItems[i]:SetPoint(point, rel, relPoint, x, y)
+        end
+    end
+end
+
+local function IsOurs(c)
+    return c == toggleButton or c == dropButton or c == dropMenu or c == nav or c == backdrop
+        or c == ghostL or c == ghostR or realOf[c] or c == MerchantFrame.NineSlice or IsMerchantItem(c)
+end
+
+-- Ancrage sur le haut de la fenetre mais place dans sa moitie basse ?
+local function InBottomArea(relPoint, y)
+    if relPoint:find("BOTTOM") then return false end
+    if relPoint:find("TOP") then return (y or 0) < -origHeight * 0.55 end
+    return (y or 0) < -origHeight * 0.05
+end
+
+-- on = rebranche sur les fantomes ; off = rend les ancrages d'origine
+local function Relocate(on)
+    if not ghostL then return end
     for _, c in ipairs({ MerchantFrame:GetChildren() }) do
-        if c ~= toggleButton and c ~= dropButton and c ~= dropMenu and c ~= nav and c ~= backdrop
-            and c ~= MerchantFrame.NineSlice and not IsMerchantItem(c) and c:GetNumPoints() == 1 then
-            local point, rel, relPoint = c:GetPoint(1)
-            local rightAnchored = rel == MerchantFrame and (point:find("RIGHT") or relPoint:find("RIGHT"))
-            local cl, cb = c:GetLeft(), c:GetBottom()
-            if not rightAnchored and cl and cb and (cb - bottom) < height * 0.45 then
-                pinned[c] = { orig = { c:GetPoint(1) }, x = cl - left, y = cb - bottom }
+        if not IsOurs(c) and c:GetNumPoints() > 0 then
+            local todo
+            for p = 1, c:GetNumPoints() do
+                local point, rel, relPoint, x, y = c:GetPoint(p)
+                local target
+                if on then
+                    if ghostOf[rel] then
+                        target = ghostOf[rel]
+                    elseif rel == MerchantFrame and InBottomArea(relPoint, y) then
+                        target = relPoint:find("RIGHT") and ghostR or ghostL
+                    end
+                elseif rel and realOf[rel] then
+                    target = realOf[rel]
+                end
+                if target then
+                    todo = todo or {}
+                    todo[#todo + 1] = { point, target, relPoint, x, y }
+                end
+            end
+            if todo then
+                for _, pt in ipairs(todo) do c:SetPoint(unpack(pt)) end
             end
         end
     end
 end
 
-local function PinChildren(on)
-    if not pinned then return end
-    for c, info in pairs(pinned) do
-        c:ClearAllPoints()
-        if on then
-            c:SetPoint("BOTTOMLEFT", MerchantFrame, "BOTTOMLEFT", info.x, info.y)
-        else
-            c:SetPoint(unpack(info.orig))
-        end
-    end
-end
-
 -- Mesure les espacements reels entre les cases (mise en page normale, fenetre visible)
+local measured
 local function Measure()
-    SnapshotChildren()
+    measured = true
     if hgap then return end
     local a, b, c = MerchantItem1, MerchantItem2, MerchantItem3
     if a and b and c and a:GetRight() and b:GetLeft() and c:GetTop() then
@@ -289,7 +339,7 @@ local function OnMerchantUpdate()
 
     ApplySize()
     LayoutGrid(perPage, cols)
-    PinChildren(true)
+    Relocate(true)
     SetBlizzardPaging(false)
 
     for i = 1, perPage do
@@ -304,7 +354,7 @@ local function OnBuybackUpdate()
     if not IsExpanded() then return end
     ApplySize()
     LayoutGrid(BUYBACK_COUNT, Layout()[1])
-    PinChildren(true)
+    Relocate(true)
     HideExtras(BUYBACK_COUNT + 1)
     nav:Hide()
 end
@@ -327,7 +377,7 @@ local function Apply()
         MerchantFrame:SetWidth(origWidth)
         MerchantFrame:SetHeight(origHeight)
         RestorePoints()
-        PinChildren(false)
+        Relocate(false)
         HideExtras(BUYBACK_COUNT + 1)
         SetBlizzardPaging(true)
         SetExpandedArt(false)
@@ -488,13 +538,23 @@ loader:SetScript("OnEvent", function(self, _, name)
     SavePoints()
     CreateControls()
     PlaceNav()
+    CreateGhosts()
 
     hooksecurefunc("MerchantFrame_UpdateMerchantInfo", OnMerchantUpdate)
     hooksecurefunc("MerchantFrame_UpdateBuybackInfo", OnBuybackUpdate)
+    -- Blizzard replace les boutons de reparation / vente des camelotes a part
+    -- (durabilite, banque de guilde...) : on les recale a chaque fois
+    for _, fn in ipairs({ "MerchantFrame_UpdateRepairButtons", "MerchantFrame_UpdateSellAllJunkButton" }) do
+        if _G[fn] then
+            hooksecurefunc(fn, function()
+                if IsExpanded() and MerchantFrame:IsShown() then Relocate(true) end
+            end)
+        end
+    end
 
     MerchantFrame:HookScript("OnShow", function()
         page = 1
-        if not pinned and IsExpanded() then
+        if not measured and IsExpanded() then
             -- Premiere ouverture : mesurer en mode normal, puis elargir
             local wanted = db.perPage
             db.perPage = 10
@@ -513,6 +573,36 @@ end)
 SLASH_VENDOREXPANDFOREVER1 = "/vef"
 SlashCmdList.VENDOREXPANDFOREVER = function(msg)
     if not db then return end
+    if msg == "debug" then
+        local function nameOf(f)
+            if not f then return "nil" end
+            if f == ghostL then return "ghostL" elseif f == ghostR then return "ghostR" end
+            if realOf[f] then return "ghost:" .. (realOf[f]:GetName() or "?") end
+            return f:GetName() or tostring(f)
+        end
+        local list = { "MerchantRepairAllButton", "MerchantRepairItemButton", "MerchantGuildBankRepairButton",
+            "MerchantRepairText", "MerchantBuyBackItem", "MerchantSellAllJunkButton" }
+        local frames = {}
+        for _, n in ipairs(list) do if _G[n] then frames[#frames + 1] = _G[n] end end
+        if MerchantBuyBackItem then
+            for _, c in ipairs({ MerchantBuyBackItem:GetChildren() }) do
+                if not c:GetName() then frames[#frames + 1] = c end
+            end
+        end
+        print(("|cff33ff99VEF|r perPage=%s frame=%dx%d orig=%dx%d"):format(db.perPage, MerchantFrame:GetWidth(),
+            MerchantFrame:GetHeight(), origWidth, origHeight))
+        local fl, fb = MerchantFrame:GetLeft() or 0, MerchantFrame:GetBottom() or 0
+        for _, f in ipairs(frames) do
+            local s = ("%s shown=%s pos=%d,%d"):format(nameOf(f), tostring(f:IsShown()),
+                (f:GetLeft() or 0) - fl, (f:GetBottom() or 0) - fb)
+            for p = 1, f:GetNumPoints() do
+                local point, rel, relPoint, x, y = f:GetPoint(p)
+                s = s .. (" | %s>%s:%s %.1f,%.1f"):format(point, nameOf(rel), tostring(relPoint), x or 0, y or 0)
+            end
+            print(s)
+        end
+        return
+    end
     local n = tonumber(msg)
     if n and LAYOUTS[n] or n == 10 then SetPerPage(n) else Toggle() end
 end
